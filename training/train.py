@@ -137,6 +137,8 @@ def main():
     parser.add_argument('--multi_label', action='store_true', help='Enable multi-label classification mode')
     parser.add_argument('--label_file', type=str, required=False,
                     help='Path to the file containing label mappings for multi-label classification')
+    
+    parser.add_argument('--local_rank', type=int, default=0)
 
 
     args = parser.parse_args()
