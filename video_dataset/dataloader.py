@@ -151,7 +151,7 @@ def create_val_dataset(args: argparse.Namespace) -> torch.utils.data.Dataset:
         sampling_rate=-1 if args.tsn_sampling else args.sampling_rate,
         spatial_size=args.spatial_size,
         label_mapping=label_mapping,  # Pass the label dictionary
-        multi_label=args.multi_label
+        multi_label=args.multi_label,
         **_parse_mean_and_std(args),
     )
 
