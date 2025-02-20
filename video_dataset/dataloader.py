@@ -128,6 +128,18 @@ def create_val_dataset(args: argparse.Namespace) -> torch.utils.data.Dataset:
             num_views=args.num_spatial_views * args.num_temporal_views,
             spatial_size=args.spatial_size,
         )
+    
+    def load_label_mapping(label_file):
+        """Load label mapping from a file where each row contains label name and its ID."""
+        mapping = {}
+        with open(label_file, "r") as f:
+            lines = f.readlines()[1:]  # Skip header
+            for line in lines:
+                label_name, label_id = line.strip().split("\t")
+                mapping[int(label_id)] = len(mapping)  # Assign a unique index
+        return mapping
+
+    label_mapping = load_label_mapping(args.label_file)  # Load label dictionary
 
     return VideoDataset(
         list_path=args.val_list_path,
@@ -138,6 +150,8 @@ def create_val_dataset(args: argparse.Namespace) -> torch.utils.data.Dataset:
         num_frames=args.num_frames,
         sampling_rate=-1 if args.tsn_sampling else args.sampling_rate,
         spatial_size=args.spatial_size,
+        label_mapping=label_mapping,  # Pass the label dictionary
+        multi_label=args.multi_label
         **_parse_mean_and_std(args),
     )
 

@@ -3,7 +3,7 @@
 import argparse
 from datetime import datetime
 import builtins
-
+import numpy as np
 import torch
 import torch.distributed as dist
 
@@ -15,6 +15,7 @@ import checkpoint
 from VitaCLIP_model import VitaCLIP
 
 from collections import OrderedDict
+from sklearn.metrics import average_precision_score
 
 def setup_print(is_master: bool):
     """
@@ -132,6 +133,10 @@ def main():
                         help='use Class Specific Context in text prompt')
     parser.add_argument('--text_prompt_classes_path', type=str, default='./classes/k400_classes.txt',
                         help='path of classnames txt file')
+    
+    parser.add_argument('--multi_label', action='store_true', help='Enable multi-label classification mode')
+    parser.add_argument('--label_file', type=str, required=False,
+                    help='Path to the file containing label mappings for multi-label classification')
 
 
     args = parser.parse_args()
@@ -303,6 +308,43 @@ def evaluate(model: torch.nn.Module, loader: torch.utils.data.DataLoader):
     tot, hit1, hit5 = sync_tensor.cpu().tolist()
 
     print(f'Accuracy on validation set: top1={hit1 / tot * 100:.2f}%, top5={hit5 / tot * 100:.2f}%')
+
+def evaluate(model: torch.nn.Module, loader: torch.utils.data.DataLoader):
+    """Evaluate the model using mean Average Precision (mAP) for multi-label classification."""
+    all_targets = []
+    all_scores = []
+    
+    eval_st = datetime.now()
+    for data, labels in loader:
+        data, labels = data.cuda(), labels.cuda()
+        assert data.size(0) == 1  # Assuming batch size of 1 for evaluation
+        
+        if data.ndim == 6:
+            data = data[0]  # Now the first dimension is number of views
+
+        with torch.no_grad():
+            logits = model(data)
+            scores = logits.sigmoid().mean(dim=0)  # Convert logits to probabilities
+
+        all_scores.append(scores.cpu().numpy())
+        all_targets.append(labels.cpu().numpy())
+        
+        if len(all_targets) % 20 == 0:
+            elapsed = datetime.now() - eval_st
+            eta = elapsed / len(all_targets) * (len(loader) - len(all_targets))
+            print(f'[Evaluation] num_samples: {len(all_targets)}  ETA: {eta}  ')
+    
+    # Convert lists to tensors
+    all_scores = torch.tensor(all_scores).numpy()
+    all_targets = torch.tensor(all_targets).numpy()
+    
+    # Compute per-class AP
+    ap_per_class = average_precision_score(all_targets, all_scores, average=None)
+    # Compute mAP
+    mAP = np.mean(ap_per_class)
+    
+    print(f'mAP on validation set: {mAP * 100:.2f}%')
+    print(f'Per-class AP: {ap_per_class}')
 
 
 if __name__ == '__main__': main()
