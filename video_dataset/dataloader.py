@@ -135,7 +135,7 @@ def create_val_dataset(args: argparse.Namespace) -> torch.utils.data.Dataset:
         with open(label_file, "r") as f:
             lines = f.readlines()[1:]  # Skip header
             for line in lines:
-                label_name, label_id = line.strip().split(",")
+                label_id, label_name = line.strip().split(",")
                 mapping[int(label_id)] = len(mapping)  # Assign a unique index
         return mapping
 
