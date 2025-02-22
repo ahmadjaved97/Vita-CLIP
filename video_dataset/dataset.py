@@ -61,6 +61,7 @@ class VideoDataset(torch.utils.data.Dataset):
             # Convert "11|7" → [11, 7] and then to multi-hot encoding
             label_ids = list(map(int, label_str.split("|")))
             multi_hot_labels = np.zeros(len(self.label_mapping), dtype=np.float32)
+            # print('multi_hot label length:: ', len(multi_hot_labels))
             for lbl in label_ids:
                 if lbl in self.label_mapping:
                     multi_hot_labels[self.label_mapping[lbl]] = 1.0
