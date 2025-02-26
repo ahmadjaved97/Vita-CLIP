@@ -137,6 +137,7 @@ def main():
     parser.add_argument('--multi_label', action='store_true', help='Enable multi-label classification mode')
     parser.add_argument('--label_file', type=str, required=False,
                     help='Path to the file containing label mappings for multi-label classification')
+    parser.add_argument('--num_classes', help='Number of classes in the dataset (used for multilabel dataset)', type=int, required=True)
     
     parser.add_argument('--local_rank', type=int, default=0)
 
@@ -192,23 +193,34 @@ def main():
     #     model.load_state_dict(renamed_ckpt, strict=True)
     
     # Load partially loaded checkpoints
-    if args.checkpoint_path:
-        print('Loading checkpoint...')
-        ckpt = torch.load(args.checkpoint_path, map_location='cpu')
+    # if args.checkpoint_path:
+    #     print('Loading checkpoint...')
+    #     ckpt = torch.load(args.checkpoint_path, map_location='cpu')
         
-        renamed_ckpt = OrderedDict((k[len("module."):], v) for k, v in ckpt['model'].items() if k.startswith("module."))
+    #     renamed_ckpt = OrderedDict((k[len("module."):], v) for k, v in ckpt['model'].items() if k.startswith("module."))
         
-        # Get model's current state_dict
-        model_state_dict = model.state_dict()
+    #     # Get model's current state_dict
+    #     model_state_dict = model.state_dict()
         
-        # Filter out mismatched parameters
-        filtered_ckpt = OrderedDict()
-        for k, v in renamed_ckpt.items():
-            if k in model_state_dict and model_state_dict[k].shape == v.shape:
-                filtered_ckpt[k] = v  # Only keep matching parameters
+    #     # Filter out mismatched parameters
+    #     filtered_ckpt = OrderedDict()
+    #     for k, v in renamed_ckpt.items():
+    #         if k in model_state_dict and model_state_dict[k].shape == v.shape:
+    #             filtered_ckpt[k] = v  # Only keep matching parameters
 
-        # Load the filtered checkpoint
-        model.load_state_dict(filtered_ckpt, strict=False)
+    #     # Load the filtered checkpoint
+    #     model.load_state_dict(filtered_ckpt, strict=False)
+
+    # Load checkpoints by averaging over classes
+    if args.checkpoint_path:
+        # create an argument for num classes
+        print('loading checkpoint')
+        ckpt = torch.load(args.checkpoint_path, map_location='cpu')
+        ckpt['model']['module.prompt_learner.ctx'] = ckpt['model']['module.prompt_learner.ctx'].mean(dim=0, keepdim=True).expand(args.num_classes, -1, -1)
+        ckpt['model']['module.prompt_learner.token_prefix'] = ckpt['model']['module.prompt_learner.token_prefix'].mean(dim=0, keepdim=True).expand(args.num_classes, -1, -1)
+        ckpt['model']['module.prompt_learner.token_suffix'] = ckpt['model']['module.prompt_learner.token_suffix'].mean(dim=0, keepdim=True).expand(args.num_classes, -1, -1)
+        renamed_ckpt = OrderedDict((k[len("module."):], v) for k, v in ckpt['model'].items() if k.startswith("module."))
+        model.load_state_dict(renamed_ckpt, strict=True)
         
         print("Checkpoint loaded successfully with partial matching!")
     
