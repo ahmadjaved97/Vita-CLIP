@@ -19,11 +19,18 @@ class VideoDataset(torch.utils.data.Dataset):
         num_frames: int, sampling_rate: int, spatial_size: int,
         mean: torch.Tensor, std: torch.Tensor,
         auto_augment: Optional[str] = None, interpolation: str = 'bicubic',
-        mirror: bool = False,
+        mirror: bool = False, label_mapping: dict = None, multi_label: bool = False
     ):
+        """
+        Args:
+            multi_label (bool): Set to True for multi-label classification.
+            label_mapping (dict): Maps label IDs to indices in the multi-hot encoding.
+        """
         self.data_root = data_root
         self.interpolation = interpolation
         self.spatial_size = spatial_size
+        self.multi_label = multi_label  # New variable for multi-label classification
+        self.label_mapping = label_mapping if label_mapping else {}
 
         self.mean, self.std = mean, std
         self.num_frames, self.sampling_rate = num_frames, sampling_rate
@@ -42,17 +49,29 @@ class VideoDataset(torch.utils.data.Dataset):
         with open(list_path) as f:
             self.data_list = f.read().splitlines()
 
-
     def __len__(self):
         return len(self.data_list)
     
-
     def __getitem__(self, idx):
         line = self.data_list[idx]
-        path, label = line.split(',')
+        path, label_str = line.split(',')
         path = os.path.join(self.data_root, path)
-        label = int(label)
 
+        if self.multi_label:
+            # Convert "11|7" → [11, 7] and then to multi-hot encoding
+            label_ids = list(map(int, label_str.split("|")))
+            multi_hot_labels = np.zeros(len(self.label_mapping), dtype=np.float32)
+            # print('multi_hot label length:: ', len(multi_hot_labels))
+            for lbl in label_ids:
+                if lbl in self.label_mapping:
+                    multi_hot_labels[self.label_mapping[lbl]] = 1.0
+            label = torch.tensor(multi_hot_labels, dtype=torch.float32)
+        else:
+            # Single-label classification
+            # label = torch.tensor(int(label_str), dtype=torch.long)
+            label = int(label_str)
+
+        # Load video frames
         container = av.open(path)
         frames = {}
         for frame in container.decode(video=0):

@@ -3,7 +3,7 @@
 import argparse
 from datetime import datetime
 import builtins
-
+import numpy as np
 import torch
 import torch.distributed as dist
 
@@ -15,6 +15,7 @@ import checkpoint
 from VitaCLIP_model import VitaCLIP
 
 from collections import OrderedDict
+from sklearn.metrics import average_precision_score
 
 def setup_print(is_master: bool):
     """
@@ -132,6 +133,13 @@ def main():
                         help='use Class Specific Context in text prompt')
     parser.add_argument('--text_prompt_classes_path', type=str, default='./classes/k400_classes.txt',
                         help='path of classnames txt file')
+    
+    parser.add_argument('--multi_label', action='store_true', help='Enable multi-label classification mode')
+    parser.add_argument('--label_file', type=str, required=False,
+                    help='Path to the file containing label mappings for multi-label classification')
+    parser.add_argument('--num_classes', help='Number of classes in the dataset (used for multilabel dataset)', type=int, required=True)
+    
+    parser.add_argument('--local_rank', type=int, default=0)
 
 
     args = parser.parse_args()
@@ -178,11 +186,43 @@ def main():
         zeroshot_text_features_path=args.zeroshot_text_features_path,
     )
 
+    # if args.checkpoint_path:
+    #     print('loading checkpoint')
+    #     ckpt = torch.load(args.checkpoint_path, map_location='cpu')
+    #     renamed_ckpt = OrderedDict((k[len("module."):], v) for k, v in ckpt['model'].items() if k.startswith("module."))
+    #     model.load_state_dict(renamed_ckpt, strict=True)
+    
+    # Load partially loaded checkpoints
+    # if args.checkpoint_path:
+    #     print('Loading checkpoint...')
+    #     ckpt = torch.load(args.checkpoint_path, map_location='cpu')
+        
+    #     renamed_ckpt = OrderedDict((k[len("module."):], v) for k, v in ckpt['model'].items() if k.startswith("module."))
+        
+    #     # Get model's current state_dict
+    #     model_state_dict = model.state_dict()
+        
+    #     # Filter out mismatched parameters
+    #     filtered_ckpt = OrderedDict()
+    #     for k, v in renamed_ckpt.items():
+    #         if k in model_state_dict and model_state_dict[k].shape == v.shape:
+    #             filtered_ckpt[k] = v  # Only keep matching parameters
+
+    #     # Load the filtered checkpoint
+    #     model.load_state_dict(filtered_ckpt, strict=False)
+
+    # Load checkpoints by averaging over classes
     if args.checkpoint_path:
+        # create an argument for num classes
         print('loading checkpoint')
         ckpt = torch.load(args.checkpoint_path, map_location='cpu')
+        ckpt['model']['module.prompt_learner.ctx'] = ckpt['model']['module.prompt_learner.ctx'].mean(dim=0, keepdim=True).expand(args.num_classes, -1, -1)
+        ckpt['model']['module.prompt_learner.token_prefix'] = ckpt['model']['module.prompt_learner.token_prefix'].mean(dim=0, keepdim=True).expand(args.num_classes, -1, -1)
+        ckpt['model']['module.prompt_learner.token_suffix'] = ckpt['model']['module.prompt_learner.token_suffix'].mean(dim=0, keepdim=True).expand(args.num_classes, -1, -1)
         renamed_ckpt = OrderedDict((k[len("module."):], v) for k, v in ckpt['model'].items() if k.startswith("module."))
         model.load_state_dict(renamed_ckpt, strict=True)
+        
+        print("Checkpoint loaded successfully with partial matching!")
     
     
     print(model)
@@ -303,6 +343,43 @@ def evaluate(model: torch.nn.Module, loader: torch.utils.data.DataLoader):
     tot, hit1, hit5 = sync_tensor.cpu().tolist()
 
     print(f'Accuracy on validation set: top1={hit1 / tot * 100:.2f}%, top5={hit5 / tot * 100:.2f}%')
+
+def evaluate(model: torch.nn.Module, loader: torch.utils.data.DataLoader):
+    """Evaluate the model using mean Average Precision (mAP) for multi-label classification."""
+    all_targets = []
+    all_scores = []
+    
+    eval_st = datetime.now()
+    for data, labels in loader:
+        data, labels = data.cuda(), labels.cuda()
+        assert data.size(0) == 1  # Assuming batch size of 1 for evaluation
+        
+        if data.ndim == 6:
+            data = data[0]  # Now the first dimension is number of views
+
+        with torch.no_grad():
+            logits = model(data)
+            scores = logits.sigmoid().mean(dim=0)
+
+        all_scores.append(scores.cpu().numpy().flatten())  
+        all_targets.append(labels.cpu().numpy().flatten()) 
+        
+        if len(all_targets) % 20 == 0:
+            elapsed = datetime.now() - eval_st
+            eta = elapsed / len(all_targets) * (len(loader) - len(all_targets))
+            print(f'[Evaluation] num_samples: {len(all_targets)}  ETA: {eta}  ')
+    
+    
+    all_scores = np.vstack(all_scores)  
+    all_targets = np.vstack(all_targets) 
+    
+    # Compute per-class AP
+    ap_per_class = average_precision_score(all_targets, all_scores, average=None)
+    # Compute mAP
+    mAP = np.mean(ap_per_class)
+    print(f'mAP on validation set: {mAP:.5f}')
+    print(f'mAP on validation set (%): {mAP * 100:.5f}%')
+    # print(f'Per-class AP: {ap_per_class}')
 
 
 if __name__ == '__main__': main()
